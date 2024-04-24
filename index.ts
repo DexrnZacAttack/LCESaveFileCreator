@@ -30,6 +30,11 @@ const path2Folder: string = resolve(process.argv[2]!);
 const zlib = true;
 
 /**
+ * Whether or not to write little endian or big endian.
+*/
+const lEndian: boolean = false; 
+
+/**
  * This is the number of bytes that the header takes up, which is 8 (4 bytes offset, 4 bytes count.)
 */
 export const headerLength: number = 8;
@@ -109,16 +114,15 @@ export async function generateSave(files: [File, Buffer][]) {
     console.log(`There are ${count} files in the folder, of which take up ${filesLength} bytes space.`);
     /**
      * This is used to keep track of where we are in the stream.
-     * Unfortunately, Buffer's write functions don't increment anywhere... so we have to do it manually,
+     * Unfortunately, Buffer's (now DataView, but still the same issue) write functions don't increment anywhere... so we have to do it manually,
      * which makes this code look a lot uglier.
      */
     let currentOffset: number = headerLength;
 
     /**
-     * This is the Buffer object that contains the bytes of the savegame that we are creating.
-     * I called it OutputStream because I liked the name better lol.
+     * This is the DataView object that contains the bytes of the savegame that we are creating.
      */
-    const sgOutputStream = Buffer.alloc(filesLength + headerLength + indexEntryLength * count);
+    const sgDV = new DataView(Buffer.alloc(filesLength + headerLength + indexEntryLength * count).buffer);
 
     /**
      * For each file in the index, we keep an offset that says where the file starts, we use fIndex to see each file's offset.
@@ -133,7 +137,7 @@ export async function generateSave(files: [File, Buffer][]) {
             console.log(`Writing ${uFileName}...`);
             // for every byte in the file, write said byte.
             file.forEach((byte) => {
-                sgOutputStream.writeUInt8(byte, currentOffset);
+                sgDV.setUint8(currentOffset, byte);
                 currentOffset += 1;
             });
         } else {
@@ -143,8 +147,8 @@ export async function generateSave(files: [File, Buffer][]) {
     }
 
     // Write offset and count to start of file
-    sgOutputStream.writeUInt32BE(offset, 0);
-    sgOutputStream.writeUInt32BE(count, 4);
+    sgDV.setUint32(0, offset, lEndian);
+    sgDV.setUint32(4, count, lEndian);
 
     // Write index entries
     for (const [fileObj, file] of files) {
@@ -156,27 +160,38 @@ export async function generateSave(files: [File, Buffer][]) {
             console.log(`Writing "${uFileName}" to index...`);
             // Write the file name in UTF16 (janky!)
             encodedUFileName.forEach((byte) => {
-                sgOutputStream.writeUInt8(0, currentOffset);
-                currentOffset += 1;
-                sgOutputStream.writeUInt8(byte, currentOffset);
-                currentOffset += 1;
+                switch (lEndian) {
+                    case true:
+                        sgDV.setUint8(currentOffset, byte);
+                        currentOffset += 1;
+                        sgDV.setUint8(currentOffset, 0);
+                        currentOffset += 1;
+                        break;
+                    default:
+                    case false:
+                        sgDV.setUint8(currentOffset, 0);
+                        currentOffset += 1;
+                        sgDV.setUint8(currentOffset, byte);
+                        currentOffset += 1;
+                        break;
+                }
             });
             // add a shit ton of 0s before adding the rest of the info
             for (var i: number = 0; i < 128 - encodedUFileName.length * 2; i++) {
-                sgOutputStream.writeUint8(0, currentOffset);
+                sgDV.setUint8(currentOffset, 0);
                 currentOffset += 1;
             }
             // File Length
-            sgOutputStream.writeUInt32BE(file.length ?? 0, currentOffset);
+            sgDV.setUint32(currentOffset, file.length ?? 0, lEndian);
             currentOffset += 4;
             // File Offset
             if (file.length !== 0)
-                sgOutputStream.writeUInt32BE(sgCurrentFileOffset[fIndex] ?? 0, currentOffset);
+                sgDV.setUint32(currentOffset, sgCurrentFileOffset[fIndex] ?? 0, lEndian);
             else
-                sgOutputStream.writeUInt32BE(0, currentOffset);
+                sgDV.setUint32(currentOffset, 0, lEndian);
             currentOffset += 4;
             // File Timestamp (Thanks to PhoenixARC for helping me find out what this is!)
-            sgOutputStream.writeBigUInt64BE(BigInt(Date.now()), currentOffset);
+            sgDV.setBigUint64(currentOffset, BigInt(Date.now()), lEndian);
             currentOffset += 8;
             fIndex++;
         } else {
@@ -187,28 +202,30 @@ export async function generateSave(files: [File, Buffer][]) {
     if (zlib == true) {
         console.log("Compressing with ZLIB");
         /**
-         * This is where we are in the deflateBuffer, as we need to be able to write a header and the save to it.
+         * This is where we are in the deflateDV, as we need to be able to write a header and the save to it.
          */
         var dbCurOffset: number = 0;
         /**
          * This contains the save data but ZLib compressed.
          */
-        const deflateStream = require("zlib").deflateSync(sgOutputStream);
-        /** This is the Buffer that we will write the header and ZLib'd data into. */
-        const deflateBuffer: Buffer = Buffer.alloc(deflateStream.length + 8);
+        const deflateStream = require("zlib").deflateSync(sgDV);
+        /** 
+         * This is the DataView that we will write the header and ZLib'd data into.
+        */
+        const deflateDV: DataView = new DataView(Buffer.alloc(deflateStream.length + 8).buffer);
         // Write header (which is the length of the uncompressed save)
-        deflateBuffer.writeBigUInt64BE(BigInt(sgOutputStream.length), dbCurOffset);
+        deflateDV.setBigInt64(dbCurOffset, BigInt(sgDV.byteLength), lEndian);
         dbCurOffset += 8;
         // write all of the ZLib compressed save data to the buffer.
         for (var i3: number = 0; i3 < deflateStream.length; i3++) {
-            deflateBuffer.writeUint8(deflateStream[i3], dbCurOffset);
+            deflateDV.setUint8(dbCurOffset, deflateStream[i3]);
             dbCurOffset++;
         }
         // Save the file.
-        await writeFile("sg_zlib.dat", deflateBuffer);
+        await writeFile("sg_zlib.dat", deflateDV);
     } else {
         // Save the file.
-        await writeFile("sg.dat", sgOutputStream);
+        await writeFile("sg.dat", sgDV);
     }
     console.log("Saved!");
 }
