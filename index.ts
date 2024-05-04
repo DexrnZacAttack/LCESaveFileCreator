@@ -31,12 +31,12 @@ const lEndian: boolean = false;
 /**
  * This is the number of bytes that the header takes up, which is 8 (4 bytes offset, 4 bytes count.)
 */
-export const headerLength: number = 8;
+const headerLength: number = 8;
 
 /**
  * This is the number of bytes that an entry in the index takes up, which is 144.
 */
-export const indexEntryLength: number = 144
+const indexEntryLength: number = 144
 
 /**
  * This contains the current file's name.
@@ -54,7 +54,7 @@ let encodedUFileName!: Uint8Array;
  */
 const textEncoder = new TextEncoder();
 
-export async function generateSave(files: [File, Buffer][]) {
+export async function generateSave(files: [File, Buffer][]): Promise<File> {
     /**
      * This is used to keep track of what file we are on... only used in one place though. (sgCurrentFileOffset)
     */
