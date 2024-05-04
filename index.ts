@@ -20,12 +20,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 */
 
-import { readdir, readFile, writeFile, stat } from "fs/promises";
-import { join, resolve, relative } from "path";
-
-// This is not final, as this will be built for the browser later.
-const path2Folder: string = resolve(process.argv[2]!);
-
 // This doesn't change ATM... TODO: Make this variable between console types, also make it an enum for console types, as different consoles use different compression.
 const zlib = true;
 
@@ -59,33 +53,6 @@ let encodedUFileName!: Uint8Array;
  * This is used to encode the filenames for the index.
  */
 const textEncoder = new TextEncoder();
-
-async function read() {
-    /**
-     * Thanks to Offroaders123 for this!
-     * I'll let him explain it since he knows what this does better than I do.
-     */
-    const entries: File[] = await Promise.all(
-        (
-            await readdir(path2Folder, { recursive: true, withFileTypes: true })
-        )
-            .filter((dirent) => dirent.isFile())
-            .map(async (dirent) => {
-                const absolutePath: string = join(dirent.path, dirent.name);
-                const data: Buffer = await readFile(absolutePath);
-                const { mtimeMs } = await stat(absolutePath);
-                const relativePath: string = relative(path2Folder, absolutePath);
-                return new File([data], relativePath, { lastModified: mtimeMs });
-            })
-    );
-    const files: [File, Buffer][] = await Promise.all(
-        entries.map(async (path) => [
-            path,
-            await readFile(`${path2Folder}\\` + path.name),
-        ])
-    );
-    generateSave(files);
-}
 
 export async function generateSave(files: [File, Buffer][]) {
     /**
@@ -198,36 +165,5 @@ export async function generateSave(files: [File, Buffer][]) {
             console.log("File has no name... unable to add to index!");
         }
     }
-    // If zlib is true, compress the file the same way the Wii U does it (ZLib with 8 bytes of header of uncompressed data length)
-    if (zlib == true) {
-        console.log("Compressing with ZLIB");
-        /**
-         * This is where we are in the deflateDV, as we need to be able to write a header and the save to it.
-         */
-        var dbCurOffset: number = 0;
-        /**
-         * This contains the save data but ZLib compressed.
-         */
-        const deflateStream = require("zlib").deflateSync(sgDV);
-        /** 
-         * This is the DataView that we will write the header and ZLib'd data into.
-        */
-        const deflateDV: DataView = new DataView(Buffer.alloc(deflateStream.length + 8).buffer);
-        // Write header (which is the length of the uncompressed save)
-        deflateDV.setBigInt64(dbCurOffset, BigInt(sgDV.byteLength), lEndian);
-        dbCurOffset += 8;
-        // write all of the ZLib compressed save data to the buffer.
-        for (var i3: number = 0; i3 < deflateStream.length; i3++) {
-            deflateDV.setUint8(dbCurOffset, deflateStream[i3]);
-            dbCurOffset++;
-        }
-        // Save the file.
-        await writeFile("sg_zlib.dat", deflateDV);
-    } else {
-        // Save the file.
-        await writeFile("sg.dat", sgDV);
-    }
-    console.log("Saved!");
+    return new File([new Blob([sgDV.buffer])], 'savegame.dat');
 }
-
-read();
